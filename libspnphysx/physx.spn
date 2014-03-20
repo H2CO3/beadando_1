@@ -1,0 +1,242 @@
+//
+// physx.spn
+// A primitive physics engine written in Sparkling
+//
+// Created by Arpad Goretity (H2CO3)
+// No license for you, sorry. Use this for good, not evil.
+//
+
+//
+// Bodies:
+// only circles for now
+// rectangle: p { x, y }, w, h
+// circle: p { x, y }, r
+//
+// other properties: velocity (v { x, y }), mass (m)
+// To be added later: elasticity (e = [0...1]), friction (mu = [0, inf))
+//
+// global properties: gravitational acceleration (g),
+// width and height of world
+//
+
+
+
+global PhysX = {
+	"g": 0,
+	"width": 0,
+	"height": 0,
+	"bodies": {}
+};
+
+function vecAdd(v1, v2) {
+	return { "x": v1.x + v2.x, "y": v1.y + v2.y };
+}
+PhysX.vecAdd = vecAdd;
+
+function vecSub(v1, v2) {
+	return { "x": v1.x - v2.x, "y": v1.y - v2.y };
+}
+PhysX.vecSub = vecSub;
+
+function dotProd(v1, v2) {
+	return v1.x * v2.x + v1.y * v2.y;
+}
+PhysX.dotProd = dotProd;
+
+function normal(v) {
+	var r = hypot(v.x, v.y);
+	return { "x": v.x / r, "y": v.y / r };
+}
+PhysX.normal = normal;
+
+function mulScalar(lambda, v) {
+	return { "x": lambda * v.x, "y": lambda * v.y };
+}
+PhysX.mulScalar = mulScalar;
+
+function addBody(body) {
+	body.collided = false;
+	body.reflected = false;
+	var bs = PhysX.bodies;
+	bs[sizeof bs] = body;
+}
+PhysX.addBody = addBody;
+
+function step(dt) {
+	PhysX.dt = dt;
+	foreach(PhysX.bodies, function(idx, body, arr, dt) {
+		PhysX.stepOne(body, dt);
+	}, dt);
+}
+PhysX.step = step;
+
+function stepOne(body, dt) {
+	body.v.y -= PhysX.g * dt;
+
+	body.p.x += body.v.x * dt;
+	body.p.y += body.v.y * dt;
+
+	// collision detection
+	// var b1 = body;
+	// for var i = 0; i < sizeof PhysX.bodies; i++ {
+	foreach(PhysX.bodies, function(idx, b2, arr, b1) {
+		// var b2 = PhysX.bodies[i];
+		// print(b2);
+
+
+
+		// do not collide an object with itself
+		if b1 == b2 {
+			return;
+		}
+
+		// do not collide objects twice
+		if b1.collided {
+			return;
+		}
+
+		// examine collision against walls
+		if not b2.reflected {
+			if PhysX.collidesWithWalls(b2) and PhysX.approachesWalls(b2) {
+				PhysX.reflectFromWalls(b2);
+			}
+
+			b2.reflected = true;
+		}
+
+		// TODO: refactor
+		if PhysX.collides(b1, b2) and PhysX.approaches(b1, b2) {
+			// resolve velocity vectors into components parallel with
+			// (N) and perpendicular to (K) the collision normal
+			var N = PhysX.collisionNormal(b1, b2);
+			var K = { "x": N.y, "y": -N.x };
+
+			var v1_para = PhysX.mulScalar(PhysX.dotProd(N, b1.v), N);
+			var v1_norm = PhysX.mulScalar(PhysX.dotProd(K, b1.v), K);
+			var v2_para = PhysX.mulScalar(PhysX.dotProd(N, b2.v), N);
+			var v2_norm = PhysX.mulScalar(PhysX.dotProd(K, b2.v), K);
+
+
+			// apply conservation of momentum in the parallel direction
+			var m1 = b1.m;
+			var m2 = b2.m;
+			var M = 1.0 / (m1 + m2);
+			var m = m1 - m2;
+
+			// para: parallel to collision normal
+			// norm: normal (perpendicular) to collision normal
+			var u1_para = PhysX.mulScalar(M, PhysX.vecAdd(PhysX.mulScalar(m, v1_para), PhysX.mulScalar(2 * m2, v2_para)));
+			var u1_norm = v1_norm;
+			var u2_para = PhysX.mulScalar(M, PhysX.vecSub(PhysX.mulScalar(2 * m1, v1_para), PhysX.mulScalar(m, v2_para)));
+			var u2_norm = v2_norm;
+
+			// add components to transform system back to canonical basis
+			b1.v = PhysX.vecAdd(u1_para, u1_norm);
+			b2.v = PhysX.vecAdd(u2_para, u2_norm);
+		}
+
+		b2.collided = true;
+
+	}, body);
+
+	// reset state of bodies after one cycle of simulation
+	foreach(PhysX.bodies, function(idx, body) {
+		body.collided = false;
+		body.reflected = false;
+		PhysX.correctPosAndVel(body);
+	});
+}
+PhysX.stepOne = stepOne;
+
+function collides(b1, b2) {
+		var dx = b2.p.x - b1.p.x;
+		var dy = b2.p.y - b1.p.y;
+		var rs = b1.r + b2.r + PhysX.dt * hypot(b1.v.x - b2.v.x, b1.v.y - b2.v.y);
+
+		return dx * dx + dy * dy <= rs * rs;
+
+}
+PhysX.collides = collides;
+
+function collidesWithWalls(body) {
+	var x_body = body.p.x;
+	var y_body = body.p.y;
+	var r_body = body.r + PhysX.dt * hypot(body.v.x, body.v.y);
+
+	return x_body - r_body <= 0 or
+	       x_body + r_body >= PhysX.width or
+	       y_body - r_body <= 0 or
+	       y_body + r_body >= PhysX.height;
+}
+PhysX.collidesWithWalls = collidesWithWalls;
+
+function reflectFromWalls(body) {
+	var x_body = body.p.x;
+	var y_body = body.p.y;
+	var r_body = body.r + PhysX.dt * hypot(body.v.x, body.v.y);
+
+	var cx = (x_body - r_body <= 0) or (x_body + r_body >= PhysX.width)  ? -1 : 1;
+	var cy = (y_body - r_body <= 0) or (y_body + r_body >= PhysX.height) ? -1 : 1;
+
+	body.v.x *= cx;
+	body.v.y *= cy;
+}
+PhysX.reflectFromWalls = reflectFromWalls;
+
+function approaches(b1, b2) {
+	var pdiff = PhysX.vecSub(b2.p, b1.p);
+	var vdiff = PhysX.vecSub(b2.v, b1.v);
+	return sgn(vdiff.x) != sgn(pdiff.x) or sgn(vdiff.y) != sgn(pdiff.y);
+}
+PhysX.approaches = approaches;
+
+function approachesWalls(body) {
+
+	var x_body = body.p.x;
+	var y_body = body.p.y;
+	var r_body = body.r + PhysX.dt * hypot(body.v.x, body.v.y);
+	var vx = body.v.x, vy = body.v.y;
+
+	return x_body - r_body <= 0 and vx <= 0
+	    or x_body + r_body >= PhysX.width and vx >= 0
+	    or y_body - r_body <= 0 and vy <= 0
+	    or y_body + r_body >= PhysX.height and vy >= 0;
+}
+PhysX.approachesWalls = approachesWalls;
+
+// returns the collision normal between two circles
+function collisionNormal(b1, b2) {
+	return PhysX.normal(PhysX.vecSub(b2.p, b1.p));
+}
+PhysX.collisionNormal = collisionNormal;
+
+
+// this compensates the upf***age of the position and velocity
+// which is caused by the quantized nature of our primitive
+// numeric integration method, the quasi-nondeterminism of
+// applying the gravity unconditionally, et cetera, et cetera
+function correctPosAndVel(body) {
+	if body.p.x < body.r {
+		body.p.x = body.r;
+	}
+
+	if body.p.y < body.r {
+		body.p.y = body.r;
+	}
+
+	if body.p.x > PhysX.width - body.r {
+		body.p.x = PhysX.width - body.r;
+	}
+
+	if body.p.y > PhysX.height - body.r {
+		body.p.x = PhysX.height - body.r;
+	}
+}
+PhysX.correctPosAndVel = correctPosAndVel;
+
+function applyImpulse(body, I) {
+	body.v = PhysX.vecAdd(body.v, PhysX.mulScalar(1.0 / body.m, I));
+}
+PhysX.applyImpulse = applyImpulse;
+
+

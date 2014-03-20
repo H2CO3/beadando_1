@@ -1,0 +1,123 @@
+// main.spn
+//
+// "Prog I Beadando 1"
+//
+// Created by Arpad Goretity on 06/03/2014
+// Still no license here because this is homework o.O
+//
+
+
+function drawArrowFromCenter(dx, dy, len) {
+	var x0 = FGFX.width / 2, y0 = FGFX.height / 2;
+	FGFX.line(x0, y0, dx, -dy);
+
+	var alpha = atan2(dy, dx);
+	FGFX.line(x0 + dx, y0 - dy, -len * cos(alpha + M_PI / 4), len * sin(alpha + M_PI / 4));
+	FGFX.line(x0 + dx, y0 - dy, -len * cos(alpha - M_PI / 4), len * sin(alpha - M_PI / 4));
+}
+
+FGFX.renderFrame = function(dt) {
+	PhysX.step(dt);
+
+	// draw walls
+	FGFX.strokeRect(0, 0, FGFX.width, FGFX.height);
+
+	// draw moving bodies
+	foreach(PhysX.bodies, function(idx, body) {
+		if body.selected {
+			FGFX.setColor(1, 0.65, 0.25);
+		} else {
+			FGFX.setColor(0.8, 0.9, 1);
+		}
+
+		FGFX.fillEllipse(body.p.x, FGFX.height - body.p.y, body.r, body.r);
+	});
+
+	// draw impulse vector
+	FGFX.setColor(0.5, 0, 1);
+	var imp = PhysX.mulScalar(0.05, FGFX.impulse);
+	drawArrowFromCenter(imp.x, imp.y, 40);
+};
+
+
+FGFX.handleEvent = function(evt) {
+	if typeof evt.y == "number" {
+		evt.y = FGFX.height - evt.y; // doomed coordinate system
+	}
+
+	if evt.type == "key" {
+		var deltaI = 600;
+		if evt.code == ' ' {
+			// shoot
+			var selectedBody = FGFX.selectedBody;
+			if selectedBody != nil {
+				PhysX.applyImpulse(selectedBody, FGFX.impulse);
+			}
+		} else if evt.code == 'w' {
+			FGFX.impulse.y += deltaI;
+		} else if evt.code == 's' {
+			FGFX.impulse.y -= deltaI;
+		} else if evt.code == 'a' {
+			FGFX.impulse.x -= deltaI;
+		} else if evt.code == 'd' {
+			FGFX.impulse.x += deltaI;
+		} else {
+			exit();
+		}
+	} else if evt.type == "mouse" {
+		if evt.button == FGFX.mouseLeft {
+			// left click: select body
+			FGFX.selectedBody = nil;
+
+			foreach (PhysX.bodies, function(idx, body, arr, evt) {
+				// check if click is inside a body
+				var diff = PhysX.vecSub(body.p, evt);
+				body.selected = diff.x * diff.x + diff.y * diff.y <= body.r * body.r;
+				if body.selected {
+					FGFX.selectedBody = body;
+				}
+			}, evt);
+		}
+	}
+};
+
+// default impulse
+FGFX.impulse = {
+	"x": 6000,
+	"y": 6000
+};
+
+// <--------- Test ---------->
+
+function randomNum(min, max) {
+	return min + (max - min) * random();
+}
+
+function randomBody() {
+	var r = randomNum(20, 60);
+	return {
+		"r": r,
+		"m": r * r / 150,
+		"p": {
+			"x": randomNum(1, PhysX.width),
+			"y": randomNum(1, PhysX.height)
+		},
+		"v": {
+			"x": randomNum(0, 150),
+			"y": randomNum(0, 150)
+		},
+		"selected": false
+	};
+}
+
+
+PhysX.g = 400;
+PhysX.width = FGFX.width;
+PhysX.height = FGFX.height;
+
+seed(time());
+
+for var i = 0; i < 4; i++ {
+	PhysX.addBody(randomBody());
+}
+
